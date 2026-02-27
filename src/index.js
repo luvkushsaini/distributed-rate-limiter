@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const { PORT, NODE_ENV } = require('./config');
-const { connectRedis } = require('./store/redisClient');
+const { connectRedis, isRedisConnected } = require('./store/redisClient');
 const logger = require('./utils/logger');
 
 const app = express();
@@ -14,13 +14,18 @@ app.use(express.json());
 
 /**
  * Health check endpoint
- * Used by monitoring tools to verify the service is running
+ * Returns server status AND Redis connection status
+ * Used by monitoring tools to verify the full service is running
  */
 app.get('/health', (req, res) => {
+    const redisStatus = isRedisConnected() ? 'connected' : 'disconnected';
     res.status(200).json({
         status: 'ok',
         timestamp: new Date().toISOString(),
         environment: NODE_ENV,
+        services: {
+            redis: redisStatus,
+        },
     });
 });
 
