@@ -1,19 +1,17 @@
 /**
  * Redis client setup
- * Creates and exports a Redis client instance
- * Uses fail-open strategy: if Redis is down, log the error but do not crash
- * This means requests will be ALLOWED through if Redis is unavailable
- * This is intentional — availability is more important than perfect rate limiting
+ *
+ * Fail-open strategy: if Redis is down, log the error but do not crash.
+ * Availability is more important than perfect rate limiting.
  */
 const { createClient } = require('redis');
 const { REDIS_URL } = require('../config');
 const logger = require('../utils/logger');
 
-// Create the Redis client using the URL from config
 const redisClient = createClient({
     url: REDIS_URL,
     socket: {
-        // Retry connection every 500ms if disconnected
+        // Exponential backoff: 500ms, 1s, 1.5s, ... capped at 3s, max 10 retries
         reconnectStrategy: (retries) => {
             if (retries > 10) {
                 logger.error('Redis max reconnection attempts reached');
@@ -24,7 +22,6 @@ const redisClient = createClient({
     },
 });
 
-// Log any Redis errors without crashing the server
 redisClient.on('error', (err) => {
     logger.error('Redis client error', {
         error: err.message,
@@ -32,25 +29,21 @@ redisClient.on('error', (err) => {
     });
 });
 
-// Log when Redis connects successfully
 redisClient.on('connect', () => {
     logger.info('Redis client connected');
 });
 
-// Log when Redis is ready to accept commands
 redisClient.on('ready', () => {
     logger.info('Redis client ready', { url: REDIS_URL });
 });
 
-// Log when Redis disconnects
 redisClient.on('end', () => {
     logger.warn('Redis client disconnected');
 });
 
 /**
- * Connect to Redis
- * Call this once when the server starts
- * Uses fail-open: logs error but does not throw, so server still starts
+ * Connect to Redis once when the server starts
+ * Does not throw — server should start even if Redis is down (fail-open)
  */
 const connectRedis = async () => {
     try {
@@ -61,13 +54,13 @@ const connectRedis = async () => {
             error: err.message,
             url: REDIS_URL,
         });
-        // Do NOT throw — server should start even if Redis is down
     }
 };
 
 /**
  * Check if Redis is currently connected
- * Used by health check endpoint
+ *
+ * @returns {boolean} true if Redis is ready to accept commands
  */
 const isRedisConnected = () => {
     return redisClient.isReady;

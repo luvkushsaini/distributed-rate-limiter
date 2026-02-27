@@ -1,7 +1,6 @@
 /**
  * Winston logger configuration
- * All logs are output in JSON format with timestamps
- * This is the production standard for structured logging
+ * JSON format for structured logging — required for production log aggregation
  */
 const winston = require('winston');
 
@@ -12,7 +11,6 @@ const logger = winston.createLogger({
         winston.format.json()
     ),
     transports: [
-        // Write all logs to console
         new winston.transports.Console({
             format: winston.format.combine(
                 winston.format.colorize(),

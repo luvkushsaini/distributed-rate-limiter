@@ -11,16 +11,14 @@ const rateLimitRoutes = require('./routes/rateLimitRoutes');
 
 const app = express();
 
-// Middleware to parse JSON request bodies
 app.use(express.json());
 
-// Apply rate limiting middleware globally — runs before every route
+// Rate limiting runs before all routes — order matters
 app.use(rateLimitMiddleware);
 
 /**
  * Health check endpoint
- * Returns server status AND Redis connection status
- * Used by monitoring tools to verify the full service is running
+ * Used by monitoring tools and load balancers to verify service availability
  */
 app.get('/health', (req, res) => {
     const redisStatus = isRedisConnected() ? 'connected' : 'disconnected';
@@ -34,12 +32,11 @@ app.get('/health', (req, res) => {
     });
 });
 
-// Mount rate limit API routes under /api
 app.use('/api', rateLimitRoutes);
 
 /**
  * Global error handling middleware
- * Catches any unhandled errors and returns a clean JSON response
+ * Must be last — Express identifies error handlers by their 4-parameter signature
  */
 app.use((err, req, res, next) => {
     logger.error('Unhandled error', { error: err.message });
@@ -51,7 +48,7 @@ app.use((err, req, res, next) => {
 
 /**
  * Start the server
- * Connect to Redis first, then start listening for requests
+ * Connects to Redis first so rate limiting is ready before accepting requests
  */
 const startServer = async () => {
     await connectRedis();

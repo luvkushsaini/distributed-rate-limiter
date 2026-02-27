@@ -172,4 +172,123 @@ describe('Fixed Window Algorithm', () => {
         expect(result.remaining).toBe(10);
         expect(result.algorithm).toBe('fixed-window');
     });
+
+    // -------------------------------------------------------
+    // TEST 7: Should handle exactly at the limit boundary
+    // Verifies: The Nth request (where N = limit) should still be ALLOWED
+    // Only the (N+1)th request should be blocked
+    // -------------------------------------------------------
+    test('should handle exactly at the limit boundary', async () => {
+        const boundaryConfig = { limit: 5, windowSeconds: 60 };
+        redisClient.ttl.mockResolvedValue(45);
+        redisClient.expire.mockResolvedValue(true);
+
+        // Make exactly 5 requests (the limit)
+        redisClient.incr.mockResolvedValueOnce(1);
+        await checkFixedWindow('user1', '/api/test', boundaryConfig);
+
+        redisClient.incr.mockResolvedValueOnce(2);
+        await checkFixedWindow('user1', '/api/test', boundaryConfig);
+
+        redisClient.incr.mockResolvedValueOnce(3);
+        await checkFixedWindow('user1', '/api/test', boundaryConfig);
+
+        redisClient.incr.mockResolvedValueOnce(4);
+        await checkFixedWindow('user1', '/api/test', boundaryConfig);
+
+        // 5th request — exactly at limit, should still be ALLOWED with remaining: 0
+        redisClient.incr.mockResolvedValueOnce(5);
+        const result5 = await checkFixedWindow('user1', '/api/test', boundaryConfig);
+
+        expect(result5.allowed).toBe(true);
+        expect(result5.remaining).toBe(0);
+
+        // 6th request — over limit, should be BLOCKED
+        redisClient.incr.mockResolvedValueOnce(6);
+        const result6 = await checkFixedWindow('user1', '/api/test', boundaryConfig);
+
+        expect(result6.allowed).toBe(false);
+        expect(result6.remaining).toBe(0);
+    });
+
+    // -------------------------------------------------------
+    // TEST 8: Should use correct key format
+    // Verifies: generateKey produces the exact "fixed:{id}:{endpoint}" format
+    // This matters because keys must be consistent for Redis lookups
+    // -------------------------------------------------------
+    test('should use correct key format', () => {
+        const key1 = generateKey('user123', '/api/search');
+        expect(key1).toBe('fixed:user123:/api/search');
+
+        const key2 = generateKey('192.168.1.1', '/health');
+        expect(key2).toBe('fixed:192.168.1.1:/health');
+    });
+
+    // -------------------------------------------------------
+    // TEST 9: Should reset limit successfully
+    // Verifies: After resetting, the counter starts fresh
+    // This is what admins use to unblock a user manually
+    // -------------------------------------------------------
+    test('should reset limit successfully', async () => {
+        redisClient.ttl.mockResolvedValue(60);
+        redisClient.expire.mockResolvedValue(true);
+
+        // Make 3 requests to build up a counter
+        redisClient.incr.mockResolvedValueOnce(1);
+        await checkFixedWindow('user1', '/api/test', defaultConfig);
+
+        redisClient.incr.mockResolvedValueOnce(2);
+        await checkFixedWindow('user1', '/api/test', defaultConfig);
+
+        redisClient.incr.mockResolvedValueOnce(3);
+        await checkFixedWindow('user1', '/api/test', defaultConfig);
+
+        // Reset the limit
+        redisClient.del.mockResolvedValue(1);
+        const resetResult = await resetLimit('user1', '/api/test');
+        expect(resetResult).toBe(true);
+
+        // After reset, next request should be like the first request again
+        redisClient.incr.mockResolvedValueOnce(1);
+        const freshResult = await checkFixedWindow('user1', '/api/test', defaultConfig);
+
+        expect(freshResult.allowed).toBe(true);
+        expect(freshResult.remaining).toBe(9);
+    });
+
+    // -------------------------------------------------------
+    // TEST 10: Should handle different endpoints independently
+    // Verifies: Each endpoint has its own counter per user
+    // user1 hitting /api/search should not affect user1 on /api/data
+    // -------------------------------------------------------
+    test('should handle different endpoints independently', async () => {
+        const searchConfig = { limit: 30, windowSeconds: 60 };
+        const dataConfig = { limit: 100, windowSeconds: 60 };
+        redisClient.ttl.mockResolvedValue(55);
+        redisClient.expire.mockResolvedValue(true);
+
+        // user1 makes 3 requests to /api/search (limit 30)
+        redisClient.incr.mockResolvedValueOnce(1);
+        await checkFixedWindow('user1', '/api/search', searchConfig);
+
+        redisClient.incr.mockResolvedValueOnce(2);
+        await checkFixedWindow('user1', '/api/search', searchConfig);
+
+        redisClient.incr.mockResolvedValueOnce(3);
+        const searchResult = await checkFixedWindow('user1', '/api/search', searchConfig);
+
+        // user1 makes 3 requests to /api/data (limit 100)
+        redisClient.incr.mockResolvedValueOnce(1);
+        await checkFixedWindow('user1', '/api/data', dataConfig);
+
+        redisClient.incr.mockResolvedValueOnce(2);
+        await checkFixedWindow('user1', '/api/data', dataConfig);
+
+        redisClient.incr.mockResolvedValueOnce(3);
+        const dataResult = await checkFixedWindow('user1', '/api/data', dataConfig);
+
+        // Each endpoint has independent counters
+        expect(searchResult.remaining).toBe(27);  // 30 - 3
+        expect(dataResult.remaining).toBe(97);     // 100 - 3
+    });
 });
