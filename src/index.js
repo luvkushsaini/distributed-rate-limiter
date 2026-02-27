@@ -6,11 +6,16 @@ const express = require('express');
 const { PORT, NODE_ENV } = require('./config');
 const { connectRedis, isRedisConnected } = require('./store/redisClient');
 const logger = require('./utils/logger');
+const rateLimitMiddleware = require('./middleware/rateLimitMiddleware');
+const rateLimitRoutes = require('./routes/rateLimitRoutes');
 
 const app = express();
 
 // Middleware to parse JSON request bodies
 app.use(express.json());
+
+// Apply rate limiting middleware globally — runs before every route
+app.use(rateLimitMiddleware);
 
 /**
  * Health check endpoint
@@ -28,6 +33,9 @@ app.get('/health', (req, res) => {
         },
     });
 });
+
+// Mount rate limit API routes under /api
+app.use('/api', rateLimitRoutes);
 
 /**
  * Global error handling middleware
