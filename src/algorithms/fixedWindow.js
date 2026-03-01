@@ -1,37 +1,20 @@
 /**
- * Fixed Window Rate Limiting Algorithm
- *
- * Why INCR instead of GET-then-SET:
- * INCR is atomic — two concurrent requests cannot read the same value.
- * GET-then-SET has a race condition: both threads read count=99, both write count=100,
- * and a 101st request sneaks through. INCR guarantees unique, sequential counter values.
+ * Fixed Window rate limiter — uses INCR for atomic counting.
+ * Each window is a simple key with TTL equal to the window duration.
  */
 const { redisClient } = require('../store/redisClient');
 const logger = require('../utils/logger');
 
 /**
- * Generate a Redis key for the fixed window counter
- *
- * @param {string} identifier - The user ID, IP address, or API key
- * @param {string} endpoint - The API endpoint being rate limited
- * @returns {string} Redis key in format "fixed:{identifier}:{endpoint}"
+ * Generate a Redis key for the fixed window counter.
  */
 const generateKey = (identifier, endpoint) => {
     return `fixed:${identifier}:${endpoint}`;
 };
 
 /**
- * Check if a request is allowed under the fixed window rate limit
- *
- * Fail-open: if Redis is down, allow the request through.
- * Availability is more important than perfect rate limiting.
- *
- * @param {string} identifier - The user ID, IP address, or API key
- * @param {string} endpoint - The API endpoint being accessed
- * @param {Object} config - Rate limit configuration
- * @param {number} config.limit - Maximum requests allowed per window
- * @param {number} config.windowSeconds - Window duration in seconds
- * @returns {Promise<Object>} Rate limit result with allowed, remaining, resetAt, etc.
+ * Check if a request is allowed under the fixed window limit.
+ * INCR is atomic — no race condition between read and write.
  */
 const checkFixedWindow = async (identifier, endpoint, config) => {
     const { limit, windowSeconds } = config;
@@ -40,7 +23,7 @@ const checkFixedWindow = async (identifier, endpoint, config) => {
     try {
         const currentCount = await redisClient.incr(key);
 
-        // Only set EXPIRE on first request to avoid resetting the window mid-flight
+        // Only set TTL on first request so we don't reset the window mid-flight
         if (currentCount === 1) {
             await redisClient.expire(key, windowSeconds);
         }
@@ -50,29 +33,14 @@ const checkFixedWindow = async (identifier, endpoint, config) => {
         const allowed = currentCount <= limit;
         const remaining = allowed ? limit - currentCount : 0;
 
-        logger.info('Fixed window rate limit check', {
-            key,
-            currentCount,
-            limit,
-            allowed,
-            remaining,
-            ttl,
+        logger.info('Fixed window check', {
+            key, currentCount, limit, allowed, remaining, ttl,
         });
 
-        return {
-            allowed,
-            remaining,
-            resetAt,
-            limit,
-            windowSeconds,
-            algorithm: 'fixed-window',
-        };
+        return { allowed, remaining, resetAt, limit, windowSeconds, algorithm: 'fixed-window' };
     } catch (err) {
-        // Fail-open: allow request through if Redis is down
         logger.error('Fixed window check failed — allowing request (fail-open)', {
-            error: err.message,
-            identifier,
-            endpoint,
+            error: err.message, identifier, endpoint,
         });
 
         return {
@@ -87,30 +55,16 @@ const checkFixedWindow = async (identifier, endpoint, config) => {
 };
 
 /**
- * Reset the rate limit counter for a specific identifier and endpoint
- *
- * @param {string} identifier - The user ID, IP address, or API key
- * @param {string} endpoint - The API endpoint
- * @returns {Promise<boolean>} true if the key existed and was deleted, false otherwise
+ * Delete the counter key to reset a user's fixed window limit.
  */
 const resetLimit = async (identifier, endpoint) => {
     const key = generateKey(identifier, endpoint);
-
     try {
         const result = await redisClient.del(key);
-
-        logger.info('Rate limit reset', {
-            key,
-            existed: result === 1,
-        });
-
+        logger.info('Fixed window reset', { key, existed: result === 1 });
         return result === 1;
     } catch (err) {
-        logger.error('Failed to reset rate limit', {
-            error: err.message,
-            key,
-        });
-
+        logger.error('Failed to reset fixed window', { error: err.message, key });
         return false;
     }
 };

@@ -13,6 +13,7 @@ jest.mock('../src/store/redisClient', () => {
         expire: jest.fn(),
         ttl: jest.fn(),
         del: jest.fn(),
+        eval: jest.fn(),
         connect: jest.fn().mockResolvedValue(true),
         isReady: true,
         on: jest.fn(),
@@ -68,7 +69,7 @@ describe('Integration Tests', () => {
     test('POST /api/check-rate-limit should return correct response shape', async () => {
         const response = await request(app)
             .post('/api/check-rate-limit')
-            .send({ userId: 'testuser', endpoint: '/api/search' });
+            .send({ userId: 'testuser', endpoint: '/api/data' });
 
         expect(response.status).toBe(200);
         expect(response.body).toHaveProperty('allowed');
