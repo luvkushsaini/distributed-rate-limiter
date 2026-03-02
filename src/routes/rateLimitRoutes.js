@@ -5,12 +5,14 @@ const express = require('express');
 const router = express.Router();
 const { checkFixedWindow, resetLimit: resetFixed } = require('../algorithms/fixedWindow');
 const { checkSlidingWindow, resetLimit: resetSliding } = require('../algorithms/slidingWindow');
+const { checkTokenBucket, resetLimit: resetToken } = require('../algorithms/tokenBucket');
 const rateLimitConfig = require('../config/rateLimitConfig');
 const logger = require('../utils/logger');
 
 const algorithmHandlers = {
     'fixed-window': { check: checkFixedWindow, reset: resetFixed },
     'sliding-window': { check: checkSlidingWindow, reset: resetSliding },
+    'token-bucket': { check: checkTokenBucket, reset: resetToken },
 };
 
 /**
