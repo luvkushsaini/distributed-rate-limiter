@@ -1,5 +1,6 @@
 const { checkFixedWindow } = require('../algorithms/fixedWindow');
 const { checkSlidingWindow } = require('../algorithms/slidingWindow');
+const { checkTokenBucket } = require("../algorithms/tokenBucket")
 const rateLimitConfig = require('../config/rateLimitConfig');
 const logger = require('../utils/logger');
 
@@ -23,6 +24,7 @@ const getConfigForEndpoint = (endpoint) => {
 const algorithmHandlers = {
     'fixed-window': checkFixedWindow,
     'sliding-window': checkSlidingWindow,
+    'token-bucket': checkTokenBucket,
 };
 
 /**

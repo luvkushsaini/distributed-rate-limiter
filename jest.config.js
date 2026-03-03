@@ -14,6 +14,9 @@ module.exports = {
         },
     },
     testMatch: ['**/tests/**/*.test.js'],
-    setupFilesAfterFramework: ['./tests/setup.js'],
+    setupFilesAfterEnv: ['./tests/setup.js'],
+    moduleNameMapper: {
+        '^uuid$': '<rootDir>/tests/helpers/mockUuid.js',
+    },
     verbose: true,
 };
