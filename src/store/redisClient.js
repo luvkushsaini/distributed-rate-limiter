@@ -1,69 +1,37 @@
-/**
- * Redis client setup
- *
- * Fail-open strategy: if Redis is down, log the error but do not crash.
- * Availability is more important than perfect rate limiting.
- */
-const { createClient } = require('redis');
-const { REDIS_URL } = require('../config');
+const Redis = require('ioredis');
 const logger = require('../utils/logger');
 
-const redisClient = createClient({
-    url: REDIS_URL,
-    socket: {
-        // Exponential backoff: 500ms, 1s, 1.5s, ... capped at 3s, max 10 retries
-        reconnectStrategy: (retries) => {
-            if (retries > 10) {
-                logger.error('Redis max reconnection attempts reached');
-                return new Error('Max reconnection attempts reached');
-            }
-            return Math.min(retries * 500, 3000);
-        },
+const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+    maxRetriesPerRequest: 3,
+    retryStrategy(times) {
+        if (times > 10) {
+            logger.error('Redis max reconnection attempts reached');
+            return null;
+        }
+        return Math.min(times * 500, 3000);
     },
 });
 
-redisClient.on('error', (err) => {
-    logger.error('Redis client error', {
-        error: err.message,
-        stack: err.stack,
-    });
-});
-
-redisClient.on('connect', () => {
-    logger.info('Redis client connected');
-});
-
-redisClient.on('ready', () => {
-    logger.info('Redis client ready', { url: REDIS_URL });
-});
-
-redisClient.on('end', () => {
-    logger.warn('Redis client disconnected');
-});
+redis.on('connect', () => logger.info('Redis connected'));
+redis.on('ready', () => logger.info('Redis ready'));
+redis.on('error', (err) => logger.error('Redis error', { error: err.message }));
+redis.on('end', () => logger.warn('Redis disconnected'));
 
 /**
- * Connect to Redis once when the server starts
- * Does not throw — server should start even if Redis is down (fail-open)
+ * @description Pings Redis to verify the connection is alive
  */
 const connectRedis = async () => {
     try {
-        await redisClient.connect();
+        await redis.ping();
         logger.info('Redis connection established successfully');
     } catch (err) {
-        logger.error('Failed to connect to Redis on startup', {
-            error: err.message,
-            url: REDIS_URL,
-        });
+        logger.error('Failed to connect to Redis', { error: err.message });
     }
 };
 
 /**
- * Check if Redis is currently connected
- *
- * @returns {boolean} true if Redis is ready to accept commands
+ * @returns {boolean} true if Redis status is ready
  */
-const isRedisConnected = () => {
-    return redisClient.isReady;
-};
+const isRedisConnected = () => redis.status === 'ready';
 
-module.exports = { redisClient, connectRedis, isRedisConnected };
+module.exports = { redis, connectRedis, isRedisConnected };

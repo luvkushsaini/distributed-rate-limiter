@@ -1,34 +1,28 @@
-/**
- * Fixed Window rate limiter — uses INCR for atomic counting.
- * Each window is a simple key with TTL equal to the window duration.
- */
-const { redisClient } = require('../store/redisClient');
+const { redis } = require('../store/redisClient');
 const logger = require('../utils/logger');
 
 /**
- * Generate a Redis key for the fixed window counter.
+ * @returns {string} Redis key for the fixed window counter
  */
 const generateKey = (identifier, endpoint) => {
     return `fixed:${identifier}:${endpoint}`;
 };
 
 /**
- * Check if a request is allowed under the fixed window limit.
- * INCR is atomic — no race condition between read and write.
+ * @description Checks if a request is allowed under the fixed window limit
  */
 const checkFixedWindow = async (identifier, endpoint, config) => {
     const { limit, windowSeconds } = config;
     const key = generateKey(identifier, endpoint);
 
     try {
-        const currentCount = await redisClient.incr(key);
+        const currentCount = await redis.incr(key);
 
-        // Only set TTL on first request so we don't reset the window mid-flight
         if (currentCount === 1) {
-            await redisClient.expire(key, windowSeconds);
+            await redis.expire(key, windowSeconds);
         }
 
-        const ttl = await redisClient.ttl(key);
+        const ttl = await redis.ttl(key);
         const resetAt = Math.floor(Date.now() / 1000) + ttl;
         const allowed = currentCount <= limit;
         const remaining = allowed ? limit - currentCount : 0;
@@ -39,7 +33,7 @@ const checkFixedWindow = async (identifier, endpoint, config) => {
 
         return { allowed, remaining, resetAt, limit, windowSeconds, algorithm: 'fixed-window' };
     } catch (err) {
-        logger.error('Fixed window check failed — allowing request (fail-open)', {
+        logger.error('Fixed window check failed — fail-open', {
             error: err.message, identifier, endpoint,
         });
 
@@ -55,12 +49,12 @@ const checkFixedWindow = async (identifier, endpoint, config) => {
 };
 
 /**
- * Delete the counter key to reset a user's fixed window limit.
+ * @description Deletes the counter key to reset a user's fixed window limit
  */
 const resetLimit = async (identifier, endpoint) => {
     const key = generateKey(identifier, endpoint);
     try {
-        const result = await redisClient.del(key);
+        const result = await redis.del(key);
         logger.info('Fixed window reset', { key, existed: result === 1 });
         return result === 1;
     } catch (err) {

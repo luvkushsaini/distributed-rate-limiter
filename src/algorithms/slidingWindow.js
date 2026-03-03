@@ -1,21 +1,7 @@
-/**
- * Sliding Window Log — rate limiter using Redis sorted sets + Lua for atomicity.
- * Each request timestamp is stored in a ZSET. Old entries are pruned per window.
- */
-const { redisClient } = require('../store/redisClient');
+const { redis } = require('../store/redisClient');
+const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
 
-/**
- * Lua script that atomically prunes, checks, and conditionally inserts.
- * KEYS[1] = sorted set key
- * ARGV[1] = window start timestamp
- * ARGV[2] = current timestamp (score)
- * ARGV[3] = unique member value
- * ARGV[4] = max allowed requests
- * ARGV[5] = TTL in seconds
- *
- * Returns { currentCount, allowed (0/1) }
- */
 const LUA_SLIDING_WINDOW = `
   redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, ARGV[1])
 
@@ -33,34 +19,33 @@ const LUA_SLIDING_WINDOW = `
 `;
 
 /**
- * Build a Redis key scoped to identifier + endpoint
+ * @returns {string} Redis key scoped to identifier + endpoint
  */
 const generateKey = (identifier, endpoint) => {
     return `sliding:${identifier}:${endpoint}`;
 };
 
 /**
- * Check if a request is allowed under the sliding window rate limit.
- * Uses a Lua script so prune → count → insert is a single atomic operation.
+ * @description Checks if a request is allowed under the sliding window limit using a Lua script
  */
 const checkSlidingWindow = async (identifier, endpoint, config) => {
     const { limit, windowSeconds } = config;
     const key = generateKey(identifier, endpoint);
     const now = Date.now();
     const windowStart = now - windowSeconds * 1000;
-    const uniqueMember = `${now}:${Math.random().toString(36).slice(2, 10)}`;
+    const uniqueMember = uuidv4();
 
     try {
-        const result = await redisClient.eval(LUA_SLIDING_WINDOW, {
-            keys: [key],
-            arguments: [
-                String(windowStart),
-                String(now),
-                uniqueMember,
-                String(limit),
-                String(windowSeconds),
-            ],
-        });
+        const result = await redis.eval(
+            LUA_SLIDING_WINDOW,
+            1,
+            key,
+            String(windowStart),
+            String(now),
+            uniqueMember,
+            String(limit),
+            String(windowSeconds)
+        );
 
         const currentCount = Number(result[0]);
         const allowed = result[1] === 1;
@@ -89,12 +74,12 @@ const checkSlidingWindow = async (identifier, endpoint, config) => {
 };
 
 /**
- * Delete the sorted set key to reset a user's sliding window counter
+ * @description Deletes the sorted set key to reset a user's sliding window counter
  */
 const resetLimit = async (identifier, endpoint) => {
     const key = generateKey(identifier, endpoint);
     try {
-        const result = await redisClient.del(key);
+        const result = await redis.del(key);
         logger.info('Sliding window reset', { key, existed: result === 1 });
         return result === 1;
     } catch (err) {
