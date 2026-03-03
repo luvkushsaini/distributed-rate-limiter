@@ -1,89 +1,99 @@
-/**
- * Rate limit API routes — manual check, reset, and config viewing.
- */
 const express = require('express');
 const router = express.Router();
-const { checkFixedWindow, resetLimit: resetFixed } = require('../algorithms/fixedWindow');
-const { checkSlidingWindow, resetLimit: resetSliding } = require('../algorithms/slidingWindow');
-const { checkTokenBucket, resetLimit: resetToken } = require('../algorithms/tokenBucket');
-const rateLimitConfig = require('../config/rateLimitConfig');
+const { checkFixedWindow } = require('../algorithms/fixedWindow');
+const { checkSlidingWindow } = require('../algorithms/slidingWindow');
+const { checkTokenBucket } = require('../algorithms/tokenBucket');
+const { query } = require('../db');
 const logger = require('../utils/logger');
 
-const algorithmHandlers = {
-    'fixed-window': { check: checkFixedWindow, reset: resetFixed },
-    'sliding-window': { check: checkSlidingWindow, reset: resetSliding },
-    'token-bucket': { check: checkTokenBucket, reset: resetToken },
+/**
+ * @description Picks the right algorithm handler based on the request body
+ */
+const selectAlgorithm = async (identifier, endpoint, body) => {
+    const { algorithm, limit, windowMs, capacity, refillRate } = body;
+
+    switch (algorithm) {
+        case 'fixed':
+            return await checkFixedWindow(identifier, endpoint, {
+                limit,
+                windowSeconds: Math.ceil(windowMs / 1000),
+            });
+        case 'token':
+            return await checkTokenBucket(identifier, endpoint, {
+                capacity,
+                refillRate,
+            });
+        case 'sliding':
+        default:
+            return await checkSlidingWindow(identifier, endpoint, {
+                limit,
+                windowSeconds: Math.ceil(windowMs / 1000),
+            });
+    }
 };
 
-/**
- * POST /api/check-rate-limit
- * Manually check rate limit for a userId + endpoint combo.
- */
-router.post('/check-rate-limit', async (req, res) => {
+router.post('/check', async (req, res) => {
     try {
-        const { userId, endpoint } = req.body;
+        const { identifier, algorithm, limit, windowMs, capacity, refillRate } = req.body;
 
-        if (!userId || !endpoint) {
-            return res.status(400).json({ error: 'userId and endpoint are required' });
+        if (!identifier) {
+            return res.status(400).json({ error: 'identifier is required' });
         }
 
-        const config = rateLimitConfig.endpoints[endpoint] || rateLimitConfig.default;
-        const algorithm = config.algorithm || 'fixed-window';
-        const handler = algorithmHandlers[algorithm] || algorithmHandlers['fixed-window'];
-        const result = await handler.check(userId, endpoint, config);
+        const endpoint = req.body.endpoint || '/api/check';
+        const result = await selectAlgorithm(identifier, endpoint, req.body);
 
-        logger.info('Manual rate limit check', {
-            userId, endpoint, allowed: result.allowed, remaining: result.remaining,
-        });
+        if (!result.allowed) {
+            await query(
+                'INSERT INTO blocked_requests (identifier, algorithm, endpoint) VALUES ($1, $2, $3)',
+                [identifier, algorithm || 'sliding', endpoint]
+            ).catch(err => logger.error('Failed to log blocked request', { error: err.message }));
+        }
 
         return res.status(200).json(result);
     } catch (err) {
-        logger.error('Error in check-rate-limit endpoint', { error: err.message });
-        return res.status(500).json({ error: 'Internal server error', message: err.message });
+        logger.error('Error in /check endpoint', { error: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
     }
 });
 
-/**
- * DELETE /api/reset-limit
- * Reset the rate limit counter for a userId + endpoint.
- */
-router.delete('/reset-limit', async (req, res) => {
+router.get('/rules', async (req, res) => {
     try {
-        const { userId, endpoint } = req.body;
+        const result = await query('SELECT * FROM rate_limit_rules ORDER BY created_at DESC');
+        return res.status(200).json(result.rows);
+    } catch (err) {
+        logger.error('Error fetching rules', { error: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+});
 
-        if (!userId || !endpoint) {
-            return res.status(400).json({ error: 'userId and endpoint are required' });
+router.post('/rules', async (req, res) => {
+    try {
+        const { identifier, algorithm, limit_count, window_ms } = req.body;
+
+        if (!algorithm || !limit_count || !window_ms) {
+            return res.status(400).json({ error: 'algorithm, limit_count, and window_ms are required' });
         }
 
-        const config = rateLimitConfig.endpoints[endpoint] || rateLimitConfig.default;
-        const algorithm = config.algorithm || 'fixed-window';
-        const handler = algorithmHandlers[algorithm] || algorithmHandlers['fixed-window'];
-        const deleted = await handler.reset(userId, endpoint);
+        const result = await query(
+            'INSERT INTO rate_limit_rules (identifier, algorithm, limit_count, window_ms) VALUES ($1, $2, $3, $4) RETURNING *',
+            [identifier || 'global', algorithm, limit_count, window_ms]
+        );
 
-        logger.info('Rate limit reset requested', { userId, endpoint, deleted });
-
-        return res.status(200).json({
-            success: true,
-            message: `Rate limit reset for ${userId} on ${endpoint}`,
-        });
+        return res.status(201).json(result.rows[0]);
     } catch (err) {
-        logger.error('Error in reset-limit endpoint', { error: err.message });
-        return res.status(500).json({ error: 'Internal server error', message: err.message });
+        logger.error('Error creating rule', { error: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
     }
 });
 
-/**
- * GET /api/limit-config
- * Returns the current rate limit configuration.
- */
-router.get('/limit-config', (req, res) => {
-    try {
-        logger.info('Rate limit config requested');
-        return res.status(200).json(rateLimitConfig);
-    } catch (err) {
-        logger.error('Error in limit-config endpoint', { error: err.message });
-        return res.status(500).json({ error: 'Internal server error', message: err.message });
-    }
+router.get('/health', (req, res) => {
+    const { isRedisConnected } = require('../store/redisClient');
+    res.status(200).json({
+        status: 'ok',
+        redis: isRedisConnected() ? 'connected' : 'disconnected',
+        timestamp: new Date().toISOString(),
+    });
 });
 
 module.exports = router;
