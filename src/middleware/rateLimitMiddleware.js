@@ -31,6 +31,11 @@ const algorithmHandlers = {
  * Express middleware — enforces rate limits using the configured algorithm.
  */
 const rateLimitMiddleware = async (req, res, next) => {
+    // Skip middleware for endpoints that handle their own rate limiting
+    if (req.path === '/check' || req.path === '/health') {
+        return next();
+    }
+
     try {
         const identifier = extractIdentifier(req);
         const endpoint = req.path;

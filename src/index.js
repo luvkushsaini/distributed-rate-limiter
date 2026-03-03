@@ -1,7 +1,7 @@
 const express = require('express');
 const { PORT, NODE_ENV } = require('./config');
 const { connectRedis } = require('./store/redisClient');
-const { connectDB } = require('./db');
+const { connectDB } = require('./db/index');
 const logger = require('./utils/logger');
 const rateLimitMiddleware = require('./middleware/rateLimitMiddleware');
 const rateLimitRoutes = require('./routes/rateLimitRoutes');
@@ -28,6 +28,8 @@ const startServer = async () => {
     });
 };
 
-startServer();
+if (require.main === module) {
+    startServer();
+}
 
 module.exports = app;

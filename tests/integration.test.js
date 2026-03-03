@@ -24,8 +24,9 @@ jest.mock('../src/utils/logger', () => ({
     warn: jest.fn(),
 }));
 
-jest.mock('../src/db', () => ({
+jest.mock('../src/db/index', () => ({
     query: jest.fn().mockResolvedValue({ rows: [] }),
+    connectDB: jest.fn().mockResolvedValue(true),
 }));
 
 const request = require('supertest');
