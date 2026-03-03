@@ -15,9 +15,9 @@ module.exports = {
             windowSeconds: 60,
         },
         '/api/data': {
-            algorithm: 'fixed-window',
-            limit: 100,
-            windowSeconds: 60,
+            algorithm: 'token-bucket',
+            capacity: 100,
+            refillRate: 0.5,
         },
         '/health': {
             algorithm: 'fixed-window',
