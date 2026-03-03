@@ -1,75 +1,62 @@
-/**
- * Integration tests for the full request flow
- * Tests the complete path: HTTP request → middleware → route handler → response
- *
- * Uses supertest to make real HTTP requests to the Express app
- * Mocks Redis so we don't need a real Redis connection
- */
-
-// Mock the Redis client
 jest.mock('../src/store/redisClient', () => {
-    const mockRedisClient = {
+    const mockRedis = {
         incr: jest.fn(),
         expire: jest.fn(),
         ttl: jest.fn(),
         del: jest.fn(),
         eval: jest.fn(),
+        hgetall: jest.fn(),
+        hset: jest.fn(),
         connect: jest.fn().mockResolvedValue(true),
-        isReady: true,
+        status: 'ready',
         on: jest.fn(),
     };
     return {
-        redisClient: mockRedisClient,
+        redis: mockRedis,
         connectRedis: jest.fn().mockResolvedValue(true),
         isRedisConnected: jest.fn().mockReturnValue(true),
     };
 });
 
-// Mock the logger to keep test output clean
 jest.mock('../src/utils/logger', () => ({
     info: jest.fn(),
     error: jest.fn(),
     warn: jest.fn(),
 }));
 
-const request = require('supertest');
-const { redisClient } = require('../src/store/redisClient');
+jest.mock('../src/db', () => ({
+    query: jest.fn().mockResolvedValue({ rows: [] }),
+}));
 
-// We need to require the app AFTER mocking Redis so the app uses the mock
+const request = require('supertest');
+const { redis } = require('../src/store/redisClient');
 const app = require('../src/index');
 
 describe('Integration Tests', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-        // Default mock behavior: allow all requests
-        redisClient.incr.mockResolvedValue(1);
-        redisClient.expire.mockResolvedValue(true);
-        redisClient.ttl.mockResolvedValue(60);
-        redisClient.del.mockResolvedValue(1);
+        redis.incr.mockResolvedValue(1);
+        redis.expire.mockResolvedValue(true);
+        redis.ttl.mockResolvedValue(60);
+        redis.del.mockResolvedValue(1);
     });
 
-    // -------------------------------------------------------
-    // TEST 1: GET /health should return 200 with correct shape
-    // -------------------------------------------------------
-    test('GET /health should return 200 with correct shape', async () => {
-        const response = await request(app).get('/health');
+    test('GET /api/health should return 200 with correct shape', async () => {
+        const response = await request(app).get('/api/health');
 
         expect(response.status).toBe(200);
         expect(response.body).toHaveProperty('status');
+        expect(response.body).toHaveProperty('redis');
         expect(response.body).toHaveProperty('timestamp');
-        expect(response.body).toHaveProperty('environment');
-        expect(response.body).toHaveProperty('services');
-        expect(response.body.services).toHaveProperty('redis');
         expect(response.body.status).toBe('ok');
     });
 
-    // -------------------------------------------------------
-    // TEST 2: POST /api/check-rate-limit should return correct response shape
-    // -------------------------------------------------------
-    test('POST /api/check-rate-limit should return correct response shape', async () => {
+    test('POST /api/check should return correct response shape', async () => {
+        redis.eval.mockResolvedValue([1, 1]);
+
         const response = await request(app)
-            .post('/api/check-rate-limit')
-            .send({ userId: 'testuser', endpoint: '/api/data' });
+            .post('/api/check')
+            .send({ identifier: 'testuser', algorithm: 'sliding', limit: 10, windowMs: 60000 });
 
         expect(response.status).toBe(200);
         expect(response.body).toHaveProperty('allowed');
@@ -78,43 +65,36 @@ describe('Integration Tests', () => {
         expect(response.body).toHaveProperty('limit');
         expect(response.body).toHaveProperty('windowSeconds');
         expect(response.body).toHaveProperty('algorithm');
+        expect(response.body.algorithm).toBe('sliding-window');
+    });
+
+    test('POST /api/check should return 400 when identifier missing', async () => {
+        const response = await request(app)
+            .post('/api/check')
+            .send({ algorithm: 'sliding', limit: 10, windowMs: 60000 });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toContain('identifier is required');
+    });
+
+    test('POST /api/check with fixed algorithm should work', async () => {
+        redis.incr.mockResolvedValue(1);
+        redis.expire.mockResolvedValue(true);
+        redis.ttl.mockResolvedValue(60);
+
+        const response = await request(app)
+            .post('/api/check')
+            .send({ identifier: 'testuser', algorithm: 'fixed', limit: 10, windowMs: 60000 });
+
+        expect(response.status).toBe(200);
+        expect(response.body.allowed).toBe(true);
         expect(response.body.algorithm).toBe('fixed-window');
     });
 
-    // -------------------------------------------------------
-    // TEST 3: POST /api/check-rate-limit should return 400 when userId missing
-    // -------------------------------------------------------
-    test('POST /api/check-rate-limit should return 400 when userId missing', async () => {
-        const response = await request(app)
-            .post('/api/check-rate-limit')
-            .send({ endpoint: '/api/search' });
-
-        expect(response.status).toBe(400);
-        expect(response.body.error).toContain('required');
-    });
-
-    // -------------------------------------------------------
-    // TEST 4: POST /api/check-rate-limit should return 400 when endpoint missing
-    // -------------------------------------------------------
-    test('POST /api/check-rate-limit should return 400 when endpoint missing', async () => {
-        const response = await request(app)
-            .post('/api/check-rate-limit')
-            .send({ userId: 'testuser' });
-
-        expect(response.status).toBe(400);
-        expect(response.body.error).toContain('required');
-    });
-
-    // -------------------------------------------------------
-    // TEST 5: GET /api/limit-config should return the rate limit configuration
-    // -------------------------------------------------------
-    test('GET /api/limit-config should return the rate limit configuration', async () => {
-        const response = await request(app).get('/api/limit-config');
+    test('GET /api/rules should return rules array', async () => {
+        const response = await request(app).get('/api/rules');
 
         expect(response.status).toBe(200);
-        expect(response.body).toHaveProperty('default');
-        expect(response.body).toHaveProperty('endpoints');
-        expect(response.body.default).toHaveProperty('limit');
-        expect(response.body.default).toHaveProperty('windowSeconds');
+        expect(Array.isArray(response.body)).toBe(true);
     });
 });
