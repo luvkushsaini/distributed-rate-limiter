@@ -1,6 +1,7 @@
 const express = require('express');
 const { PORT, NODE_ENV } = require('./config');
 const { connectRedis } = require('./store/redisClient');
+const { connectDB } = require('./db');
 const logger = require('./utils/logger');
 const rateLimitMiddleware = require('./middleware/rateLimitMiddleware');
 const rateLimitRoutes = require('./routes/rateLimitRoutes');
@@ -21,6 +22,7 @@ app.use((err, req, res, next) => {
 
 const startServer = async () => {
     await connectRedis();
+    await connectDB();
     app.listen(PORT, () => {
         logger.info(`Server running on port ${PORT}`);
     });
