@@ -5,6 +5,7 @@ const { connectDB } = require('./db/index');
 const logger = require('./utils/logger');
 const rateLimitMiddleware = require('./middleware/rateLimitMiddleware');
 const rateLimitRoutes = require('./routes/rateLimitRoutes');
+require('./metrics/prometheus');
 
 const app = express();
 
@@ -23,7 +24,7 @@ app.use((err, req, res, next) => {
 const startServer = async () => {
     await connectRedis();
     await connectDB();
-    app.listen(PORT, () => {
+    app.listen(PORT, '0.0.0.0', () => {
         logger.info(`Server running on port ${PORT}`);
     });
 };

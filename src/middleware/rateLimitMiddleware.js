@@ -32,7 +32,7 @@ const algorithmHandlers = {
  */
 const rateLimitMiddleware = async (req, res, next) => {
     // Skip middleware for endpoints that handle their own rate limiting
-    if (req.path === '/check' || req.path === '/health') {
+    if (req.path === '/check' || req.path === '/health' || req.path === '/metrics') {
         return next();
     }
 
