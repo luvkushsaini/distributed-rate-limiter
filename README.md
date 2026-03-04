@@ -2,7 +2,7 @@
 
 A production-grade distributed rate limiting service built from scratch using **Node.js**, **Redis**, and **PostgreSQL** — with full **Prometheus + Grafana** observability.
 
-> Built to understand how real-world rate limiting works under the hood — no external rate limiting libraries used.
+> No external rate limiting libraries — all three algorithms implemented from scratch in Redis using Lua scripts for atomic operations.
 
 ![Grafana Dashboard](docs/grafana-dashboard.png)
 
