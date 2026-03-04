@@ -4,7 +4,7 @@ A production-grade distributed rate limiting service built from scratch using **
 
 > Built to understand how real-world rate limiting works under the hood — no external rate limiting libraries used.
 
-![Grafana Dashboard](docs/grafana-dashboard.png.png)
+![Grafana Dashboard](docs/grafana-dashboard.png)
 
 ---
 
