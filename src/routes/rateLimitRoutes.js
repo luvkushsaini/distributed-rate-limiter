@@ -5,6 +5,7 @@ const { checkSlidingWindow } = require('../algorithms/slidingWindow');
 const { checkTokenBucket } = require('../algorithms/tokenBucket');
 const { query } = require('../db');
 const logger = require('../utils/logger');
+const { promClient, requestsTotal, blockedTotal, latencyHistogram } = require('../metrics/prometheus');
 
 /**
  * @description Picks the right algorithm handler based on the request body
@@ -32,7 +33,22 @@ const selectAlgorithm = async (identifier, endpoint, body) => {
     }
 };
 
+/**
+ * @description Returns Prometheus-formatted metrics for scraping
+ */
+router.get('/metrics', async (req, res) => {
+    try {
+        res.set('Content-Type', promClient.register.contentType);
+        const metrics = await promClient.register.metrics();
+        return res.end(metrics);
+    } catch (err) {
+        logger.error('Error serving metrics', { error: err.message });
+        return res.status(500).json({ error: 'Failed to collect metrics' });
+    }
+});
+
 router.post('/check', async (req, res) => {
+    const endTimer = latencyHistogram.startTimer();
     try {
         const { identifier, algorithm, limit, windowMs, capacity, refillRate } = req.body;
 
@@ -41,12 +57,18 @@ router.post('/check', async (req, res) => {
         }
 
         const endpoint = req.body.endpoint || '/api/check';
+        const algorithmLabel = algorithm || 'sliding';
         const result = await selectAlgorithm(identifier, endpoint, req.body);
 
+        const status = result.allowed ? 'allowed' : 'blocked';
+        endTimer({ algorithm: algorithmLabel });
+        requestsTotal.inc({ algorithm: algorithmLabel, status });
+
         if (!result.allowed) {
+            blockedTotal.inc({ algorithm: algorithmLabel });
             await query(
                 'INSERT INTO blocked_requests (identifier, algorithm, endpoint) VALUES ($1, $2, $3)',
-                [identifier, algorithm || 'sliding', endpoint]
+                [identifier, algorithmLabel, endpoint]
             ).catch(err => logger.error('Failed to log blocked request', { error: err.message }));
         }
 
